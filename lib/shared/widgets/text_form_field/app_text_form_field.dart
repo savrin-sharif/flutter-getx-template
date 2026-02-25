@@ -10,6 +10,7 @@ import '../../helpers/input_formatter.dart';
 class AppTextFormField extends StatefulWidget {
   final String? label;
   final TextEditingController? controller;
+  final TextEditingController? matchController;
   final String? initialValue;
   final FormFieldType type;
   final String? hintText;
@@ -40,6 +41,7 @@ class AppTextFormField extends StatefulWidget {
     super.key,
     this.label,
     this.controller,
+    this.matchController,
     this.initialValue,
     this.type = FormFieldType.general,
     this.hintText,
@@ -154,7 +156,12 @@ class _AppTextFormFieldState extends State<AppTextFormField> {
       onTapOutside: widget.onTapOutside ?? (_) => FocusManager.instance.primaryFocus?.unfocus(),
       inputFormatters: getInputFormatters(widget.type),
       autovalidateMode: AutovalidateMode.onUserInteraction,
-      validator: widget.validator ?? (value) => validateField(value, widget.type),
+      validator: widget.validator ??
+              (value) => validateField(
+            value,
+            widget.type,
+            widget.matchController?.text,
+          ),
       buildCounter: widget.showCounter
           ? (context, {required currentLength, required isFocused, maxLength}) => Text(
                 '\$currentLength/\${maxLength ?? ""}',

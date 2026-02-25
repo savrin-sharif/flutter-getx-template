@@ -21,7 +21,7 @@ ThemeData appTheme(BuildContext context) {
         borderSide: BorderSide(color: AppColors.primaryColor),
       ),
       enabledBorder: const OutlineInputBorder(
-        borderSide: const BorderSide(color: Color(0xFFD8D9DD)),
+        borderSide: BorderSide(color: Color(0xFFD8D9DD)),
       ),
       floatingLabelStyle: const TextStyle(color: AppColors.primaryColor),
       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 20),
