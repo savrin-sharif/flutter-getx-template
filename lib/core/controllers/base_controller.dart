@@ -23,15 +23,15 @@ mixin BaseController on GetxController {
     final lowerMsg = message.toLowerCase();
 
     final isConnectionError = lowerMsg.contains('no internet') ||
-      lowerMsg.contains('connection') ||
-      lowerMsg.contains('network') ||
-      lowerMsg.contains('failed host lookup');
+        lowerMsg.contains('connection') ||
+        lowerMsg.contains('network') ||
+        lowerMsg.contains('failed host lookup');
 
     showSnack(
       content: message,
       status: isConnectionError
-        ? SnackBarStatus.disconnected
-        : SnackBarStatus.error,
+          ? SnackBarStatus.disconnected
+          : SnackBarStatus.error,
     );
   }
 
