@@ -35,6 +35,13 @@ mixin BaseController on GetxController {
     );
   }
 
+  void showSuccess(String message) {
+    showSnack(
+      content: message,
+      status: SnackBarStatus.success,
+    );
+  }
+
   bool validateForm(GlobalKey<FormState> formKey) {
     return formKey.currentState?.validate() ?? false;
   }
