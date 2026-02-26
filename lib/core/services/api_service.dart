@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:dio/dio.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -263,11 +262,11 @@ enum ApiType { public, private }
 enum AuthMode { backendJwt, firebaseIdToken }
 
 class ApiAuthConfig {
-  static AuthMode mode = AuthMode.firebaseIdToken; // <-- change according to need
+  static AuthMode mode = AuthMode.backendJwt; // <-- change according to need
 
   // Only for backendJwt mode:
-  static const String refreshPath = '/auth/refresh'; // <-- change to real endpoint
-  static const String refreshTokenField = 'refresh_token';
+  static const String refreshPath = '/api/v1/refresh-token/'; // <-- change to real endpoint
+  static const String refreshTokenField = 'refresh';
 }
 
 class ApiService {
@@ -305,7 +304,7 @@ class ApiService {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
-        validateStatus: (status) => status != null && status < 500,
+        validateStatus: (status) => status != null && status < 400,
       ),
     );
   }
@@ -361,41 +360,30 @@ class ApiService {
   ///                     PRIVATE CLIENT INTERCEPTORS
   /// =========================================================================
   void setupPrivateInterceptors() {
-    // Prevent multiple refresh calls at the same time
     Completer<void>? refreshCompleter;
 
-    privateClient.interceptors.addAll([
+    privateClient.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
-          try {
-            // Attach token based on mode
-            if (ApiAuthConfig.mode == AuthMode.firebaseIdToken) {
-              final user = FirebaseAuth.instance.currentUser;
-              if (user != null) {
-                // false = use cached if still valid, otherwise Firebase refreshes automatically
-                final idToken = await user.getIdToken(false);
-                options.headers['Authorization'] = 'Bearer $idToken';
-              }
-            } else {
-              final token = authStorage.accessToken;
-              if (token != null && token.isNotEmpty) {
-                options.headers['Authorization'] = 'Bearer $token';
-              }
-            }
-          } catch (_) {
-            // ignore token attach errors; request may still proceed (backend will reject)
+          if (options.extra['skipAuth'] == true) {
+            return handler.next(options);
+          }
+
+          final token = authStorage.accessToken;
+
+          if (token != null && token.isNotEmpty) {
+            options.headers['Authorization'] = 'Bearer $token';
           }
 
           logger.logRequest(options.method, options.uri);
           logger.logHeaders(options.headers);
           logger.logPayload(options.data);
+
           handler.next(options);
         },
 
         onResponse: (response, handler) {
           logger.logResponse(response.statusCode, response.data);
-
-          // NOTE: don't logout immediately here, because we want onError to attempt refresh+retry.
           handler.next(response);
         },
 
@@ -404,7 +392,7 @@ class ApiService {
           final isUnauthorized = statusCode == 401 ||
               (statusCode == 403 && isUnauthorizedError(e.response?.data));
 
-          // connectivity errors
+          // Connectivity error
           if (e.type == DioExceptionType.connectionError ||
               e.message?.toLowerCase().contains('failed host lookup') == true) {
             logger.error('[PRIVATE API ERROR] Connection Error: ${e.message}');
@@ -415,15 +403,14 @@ class ApiService {
             return handler.next(e);
           }
 
-          // Only attempt refresh on unauthorized
           if (!isUnauthorized) {
             logger.error('[PRIVATE API ERROR] ${e.message}');
             return handler.next(e);
           }
 
-          // Prevent infinite retry loops
           final req = e.requestOptions;
           final alreadyRetried = (req.extra['__retried__'] == true);
+
           if (alreadyRetried) {
             logger.error('[PRIVATE API] Unauthorized even after retry → logging out.');
             AuthTokenService().logOut();
@@ -433,12 +420,11 @@ class ApiService {
           logger.warn('[PRIVATE API] Unauthorized → attempting token refresh...');
 
           try {
-            // If a refresh is already running, wait for it
             if (refreshCompleter != null) {
               await refreshCompleter!.future;
             } else {
               refreshCompleter = Completer<void>();
-              await _refreshToken(); // refresh based on mode
+              await _refreshToken();
               refreshCompleter!.complete();
               refreshCompleter = null;
             }
@@ -446,22 +432,14 @@ class ApiService {
             // Retry original request once
             req.extra['__retried__'] = true;
 
-            // Attach new token for retry
-            if (ApiAuthConfig.mode == AuthMode.firebaseIdToken) {
-              final user = FirebaseAuth.instance.currentUser;
-              final fresh = await user?.getIdToken(true); // FORCE refresh
-              if (fresh != null && fresh.isNotEmpty) {
-                req.headers['Authorization'] = 'Bearer $fresh';
-              }
-            } else {
-              final token = authStorage.accessToken;
-              if (token != null && token.isNotEmpty) {
-                req.headers['Authorization'] = 'Bearer $token';
-              }
+            final newToken = authStorage.accessToken;
+            if (newToken != null && newToken.isNotEmpty) {
+              req.headers['Authorization'] = 'Bearer $newToken';
             }
 
             final res = await privateClient.fetch(req);
             return handler.resolve(res);
+
           } catch (err, st) {
             logger.error('[PRIVATE API] Refresh failed → logging out.', err, st);
             AuthTokenService().logOut();
@@ -469,62 +447,86 @@ class ApiService {
           }
         },
       ),
-    ]);
+    );
   }
 
   Future<void> _refreshToken() async {
-    if (ApiAuthConfig.mode == AuthMode.firebaseIdToken) {
-      // Firebase handles refresh internally; forcing here ensures a fresh one exists
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) throw AppException('User not logged in');
-      await user.getIdToken(true);
-      return;
-    }
-
-    // ---------------- Backend JWT refresh flow ----------------
     final refresh = authStorage.refreshToken;
+
     if (refresh == null || refresh.isEmpty) {
+      logger.error('[PRIVATE API] Missing refresh token → cannot refresh');
       throw AppException('Missing refresh token');
     }
 
-    // IMPORTANT: use a raw Dio client without interceptors to avoid recursion
-    final Dio raw = Dio(privateClient.options);
+    logger.warn('[PRIVATE API] Refresh call starting...');
+    logger.warn('[PRIVATE API] Refresh full URL: ${privateClient.options.baseUrl}${ApiAuthConfig.refreshPath}');
+    logger.warn('[PRIVATE API] Refresh field: ${ApiAuthConfig.refreshTokenField}');
+    logger.warn('[PRIVATE API] Refresh token exists: ${refresh.isNotEmpty}');
 
-    final resp = await raw.post(
+    final resp = await privateClient.post(
       ApiAuthConfig.refreshPath,
-      data: {ApiAuthConfig.refreshTokenField: refresh},
+      data: {
+        ApiAuthConfig.refreshTokenField: refresh,
+      },
+      options: Options(
+        extra: {'skipAuth': true}, // prevent interceptor recursion
+      ),
     );
 
-    // If refresh fails, throw
+    logger.warn('[PRIVATE API] Refresh response status: ${resp.statusCode}');
+    logger.warn('[PRIVATE API] Refresh response body: ${resp.data}');
+
     final status = resp.statusCode ?? 0;
     if (status < 200 || status >= 300) {
-      throw AppException('Refresh token failed', statusCode: status, body: resp.data);
+      throw AppException(
+        'Refresh token failed',
+        statusCode: status,
+        body: resp.data,
+      );
     }
 
-    // Parse tokens from backend response (adjust keys to match API)
     final data = resp.data;
     if (data is! Map) {
       throw AppException('Invalid refresh response format');
     }
 
-    final newAccess = data['access_token']?.toString() ?? '';
-    final newRefresh = data['refresh_token']?.toString() ?? '';
-    final newSession = data['session_token']?.toString() ?? '';
+    final newAccess =
+        (data['access_token'] ?? data['access'])?.toString() ?? '';
+    final newRefresh =
+        (data['refresh_token'] ?? data['refresh'])?.toString() ?? '';
 
     if (newAccess.isEmpty) {
-      throw AppException('Refresh succeeded but access_token missing');
+      throw AppException('Refresh succeeded but access token missing');
     }
 
-    // Keep old refresh if backend doesn't rotate it
     authStorage.setTokens(
-      sessionToken: newSession.isNotEmpty ? newSession : (authStorage.sessionToken ?? ''),
+      sessionToken: authStorage.sessionToken ?? '',
       accessToken: newAccess,
       refreshToken: newRefresh.isNotEmpty ? newRefresh : refresh,
     );
+
+    logger.warn('[PRIVATE API] Refresh success → tokens updated.');
   }
 
   static bool isUnauthorizedError(dynamic data) {
-    if (data is Map && data['error'] == 'Unauthorized') return true;
+    if (data is! Map) return false;
+
+    final code = data['code']?.toString();
+    final detail = data['detail']?.toString().toLowerCase() ?? '';
+
+    if (code == 'token_not_valid') return true;
+    if (detail.contains('token')) return true;
+
+    final messages = data['messages'];
+    if (messages is List) {
+      for (final m in messages) {
+        final msg = (m is Map ? m['message'] : null)?.toString().toLowerCase() ?? '';
+        if (msg.contains('expired') || msg.contains('not valid') || msg.contains('token')) {
+          return true;
+        }
+      }
+    }
+
     return false;
   }
 
@@ -552,12 +554,12 @@ class ApiService {
   ///                              HTTP METHODS
   /// =========================================================================
   Future<Response> get(
-    String path, {
-      Map<String, dynamic>? query,
-      ApiType apiType = ApiType.private,
-      String? overrideBaseUrl,
-      Map<String, dynamic>? headers,
-    }) async {
+      String path, {
+        Map<String, dynamic>? query,
+        ApiType apiType = ApiType.private,
+        String? overrideBaseUrl,
+        Map<String, dynamic>? headers,
+      }) async {
     final client = getClient(apiType, overrideBaseUrl);
     final options = Options(
       headers: headers != null
@@ -575,13 +577,13 @@ class ApiService {
   }
 
   Future<Response> post(
-    String path, {
-      dynamic data,
-      Map<String, dynamic>? query,
-      ApiType apiType = ApiType.private,
-      String? overrideBaseUrl,
-      Map<String, dynamic>? headers,
-    }) async {
+      String path, {
+        dynamic data,
+        Map<String, dynamic>? query,
+        ApiType apiType = ApiType.private,
+        String? overrideBaseUrl,
+        Map<String, dynamic>? headers,
+      }) async {
     final client = getClient(apiType, overrideBaseUrl);
     final options = Options(
       headers: headers != null
@@ -600,13 +602,13 @@ class ApiService {
   }
 
   Future<Response> patch(
-    String path, {
-      dynamic data,
-      Map<String, dynamic>? query,
-      ApiType apiType = ApiType.private,
-      String? overrideBaseUrl,
-      Map<String, dynamic>? headers,
-    }) async {
+      String path, {
+        dynamic data,
+        Map<String, dynamic>? query,
+        ApiType apiType = ApiType.private,
+        String? overrideBaseUrl,
+        Map<String, dynamic>? headers,
+      }) async {
     final client = getClient(apiType, overrideBaseUrl);
     final options = Options(
       headers: headers != null
@@ -625,13 +627,13 @@ class ApiService {
   }
 
   Future<Response> put(
-    String path, {
-      dynamic data,
-      Map<String, dynamic>? query,
-      ApiType apiType = ApiType.private,
-      String? overrideBaseUrl,
-      Map<String, dynamic>? headers,
-    }) async {
+      String path, {
+        dynamic data,
+        Map<String, dynamic>? query,
+        ApiType apiType = ApiType.private,
+        String? overrideBaseUrl,
+        Map<String, dynamic>? headers,
+      }) async {
     final client = getClient(apiType, overrideBaseUrl);
     final options = Options(
       headers: headers != null
@@ -650,13 +652,13 @@ class ApiService {
   }
 
   Future<Response> delete(
-    String path, {
-      dynamic data,
-      Map<String, dynamic>? query,
-      ApiType apiType = ApiType.private,
-      String? overrideBaseUrl,
-      Map<String, dynamic>? headers,
-    }) async {
+      String path, {
+        dynamic data,
+        Map<String, dynamic>? query,
+        ApiType apiType = ApiType.private,
+        String? overrideBaseUrl,
+        Map<String, dynamic>? headers,
+      }) async {
     final client = getClient(apiType, overrideBaseUrl);
     final options = Options(
       headers: headers != null
