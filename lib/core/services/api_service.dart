@@ -304,7 +304,7 @@ class ApiService {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
-        validateStatus: (status) => status != null && status < 400,
+        validateStatus: (status) => true,
       ),
     );
   }
@@ -389,6 +389,7 @@ class ApiService {
 
         onError: (e, handler) async {
           final statusCode = e.response?.statusCode;
+          final responseBody = e.response?.data;
           final isUnauthorized = statusCode == 401 ||
               (statusCode == 403 && isUnauthorizedError(e.response?.data));
 
@@ -404,7 +405,7 @@ class ApiService {
           }
 
           if (!isUnauthorized) {
-            logger.error('[PRIVATE API ERROR] ${e.message}');
+            logger.error('[PRIVATE API ERROR] ${e.message} | body: $responseBody');
             return handler.next(e);
           }
 
