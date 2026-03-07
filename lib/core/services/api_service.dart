@@ -304,7 +304,11 @@ class ApiService {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
-        validateStatus: (status) => true,
+        validateStatus: (status) {
+          // Let 2xx through as success; everything else is an error
+          // so onError interceptor fires for 401/403
+          return status != null && status >= 200 && status < 300;
+        },
       ),
     );
   }
