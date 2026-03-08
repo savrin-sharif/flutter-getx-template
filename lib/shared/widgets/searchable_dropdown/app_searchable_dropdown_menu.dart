@@ -5,12 +5,16 @@ class AppSearchableDropdown extends StatefulWidget {
   final String? labelText;
   final String? hintText;
   final double widthFactor;
+  final double? menuHeight;
   final String? initialValue;
   final ValueChanged<String?>? onChanged;
   final TextEditingController? controller;
   final bool? enableSearch;
   final FormFieldValidator<String>? validator;
   final AutovalidateMode autoValidateMode;
+  final String noItemsText;
+  final String noMatchText;
+  final FocusNode? focusNode;
 
   const AppSearchableDropdown({
     super.key,
@@ -18,12 +22,16 @@ class AppSearchableDropdown extends StatefulWidget {
     this.labelText,
     this.hintText,
     this.widthFactor = 0.8,
+    this.menuHeight = 200,
     this.initialValue,
     this.onChanged,
     this.controller,
     this.enableSearch = true,
     this.validator,
     this.autoValidateMode = AutovalidateMode.onUserInteraction,
+    this.noItemsText = 'No item found',
+    this.noMatchText = 'No match found',
+    this.focusNode,
   });
 
   @override
@@ -32,41 +40,54 @@ class AppSearchableDropdown extends StatefulWidget {
 
 class _AppSearchableDropdownState extends State<AppSearchableDropdown> {
   late final TextEditingController _controller;
-  String? _selectedValue;
+  late final FocusNode _focusNode;
 
-  static const List<String> _defaultItems = [
-    'Option 1',
-    'Option 2',
-    'Option 3',
-    'Option 4',
-    'Option 5',
-  ];
+  String? _selectedValue;
 
   bool get _hasSelection =>
       _selectedValue != null && _selectedValue!.isNotEmpty;
 
-  List<String> get _items =>
-      (widget.items == null || widget.items!.isEmpty)
-          ? _defaultItems
-          : widget.items!;
-
   bool get enableSearch => widget.enableSearch ?? true;
+
+  List<String> get _items => widget.items ?? const [];
 
   @override
   void initState() {
     super.initState();
     _controller = widget.controller ?? TextEditingController();
+    _focusNode = widget.focusNode ?? FocusNode();
+    if (!enableSearch) {
+      _focusNode.canRequestFocus = false;
+    }
 
     _selectedValue = widget.initialValue;
     if (widget.initialValue != null) {
       _controller.text = widget.initialValue!;
     }
+
+    _controller.addListener(_handleControllerChanged);
+  }
+
+  void _handleControllerChanged() {
+    if (!mounted || !enableSearch) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        setState(() {
+        });
+      }
+    });
   }
 
   @override
   void didUpdateWidget(covariant AppSearchableDropdown oldWidget) {
     super.didUpdateWidget(oldWidget);
 
+    if (widget.enableSearch != oldWidget.enableSearch) {
+      _focusNode.canRequestFocus = enableSearch;
+    }
+
+    // If initialValue changes and there is no user selection yet,
+    // update selection + controller text
     if (widget.initialValue != oldWidget.initialValue &&
         (_selectedValue == null || _selectedValue!.isEmpty)) {
       final newValue = widget.initialValue;
@@ -84,29 +105,72 @@ class _AppSearchableDropdownState extends State<AppSearchableDropdown> {
     if (widget.controller == null) {
       _controller.dispose();
     }
+
+    if (widget.focusNode == null) {
+      _focusNode.dispose();
+    }
+
     super.dispose();
+  }
+
+  TextStyle get _emptyTextStyle => const TextStyle(
+    fontSize: 16,
+    fontWeight: FontWeight.w600,
+    height: 1.67,
+    letterSpacing: 0.20,
+    color: Colors.black54,
+  );
+
+  TextStyle get _itemTextStyle => const TextStyle(
+    fontSize: 20,
+    fontWeight: FontWeight.w600,
+    height: 1.67,
+    letterSpacing: 0.20,
+  );
+
+  List<DropdownMenuEntry<String>> _buildEntries() {
+    final items = _items;
+
+    // Case 1: no items at all
+    if (items.isEmpty) {
+      return [
+        DropdownMenuEntry<String>(
+          enabled: false,
+          value: '__no_items__',
+          label: widget.noItemsText,
+          labelWidget: Text(widget.noItemsText, style: _emptyTextStyle),
+        )
+      ];
+    }
+
+    final query = _controller.text.trim().toLowerCase();
+    final List<String> filtered = (enableSearch && query.isNotEmpty)
+        ? items.where((x) => x.toLowerCase().contains(query)).toList()
+        : items;
+
+    // Case 2: search typed but nothing matches
+    if (enableSearch && query.isNotEmpty && filtered.isEmpty) {
+      return [
+        DropdownMenuEntry<String>(
+          enabled: false,
+          value: '__no_match__',
+          label: widget.noMatchText,
+          labelWidget: Text(widget.noMatchText, style: _emptyTextStyle),
+        )
+      ];
+    }
+
+    return filtered.map(
+      (item) => DropdownMenuEntry<String>(
+        value: item,
+        label: item,
+        labelWidget: Text(item, style: _itemTextStyle),
+      ),
+    ).toList();
   }
 
   @override
   Widget build(BuildContext context) {
-    final menuEntries = _items
-        .map(
-          (item) => DropdownMenuEntry<String>(
-        value: item,
-        label: item,
-        labelWidget: Text(
-          item,
-          style: const TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.w600,
-            height: 1.67,
-            letterSpacing: 0.20,
-          ),
-        ),
-      ),
-    )
-        .toList();
-
     return LayoutBuilder(
       builder: (context, constraints) {
         final maxWidth = constraints.maxWidth * widget.widthFactor;
@@ -124,19 +188,21 @@ class _AppSearchableDropdownState extends State<AppSearchableDropdown> {
                 });
               }
 
+              final entries = _buildEntries();
+
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   DropdownMenu<String>(
                     width: maxWidth,
                     controller: _controller,
+                    focusNode: _focusNode,
                     initialSelection: _selectedValue,
                     enableSearch: enableSearch,
-                    enableFilter: enableSearch,
+                    enableFilter: false,
                     requestFocusOnTap: enableSearch,
-                    label: widget.labelText != null
-                        ? Text(widget.labelText!)
-                        : null,
+                    label:
+                    widget.labelText != null ? Text(widget.labelText!) : null,
                     hintText: widget.hintText,
                     inputDecorationTheme: InputDecorationTheme(
                       labelStyle: const TextStyle(
@@ -180,20 +246,30 @@ class _AppSearchableDropdownState extends State<AppSearchableDropdown> {
                         ),
                       ),
                     ),
+
                     menuStyle: MenuStyle(
-                      shape:
-                      WidgetStateOutlinedBorder.resolveWith((_) {
+                      maximumSize: WidgetStateProperty.all(
+                        Size.fromHeight(widget.menuHeight ?? 200),
+                      ),
+                      shape: .resolveWith((_) {
                         return RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(6),
                           side: BorderSide(
                             color: field.hasError
-                                ? Theme.of(context).colorScheme.error
-                                : const Color(0xFF868B8F),
+                              ? Theme.of(context).colorScheme.error
+                              : const Color(0xFF868B8F),
                           ),
                         );
                       }),
                     ),
+
                     onSelected: (String? value) {
+                      // Prevent selecting placeholder entries
+                      if (value == '__no_items__' || value == '__no_match__') {
+                        FocusScope.of(context).unfocus();
+                        return;
+                      }
+
                       setState(() {
                         _selectedValue = value;
                       });
@@ -203,10 +279,10 @@ class _AppSearchableDropdownState extends State<AppSearchableDropdown> {
                       FocusScope.of(context).unfocus();
                       widget.onChanged?.call(value);
                     },
+
                     trailingIcon: AnimatedSwitcher(
                       duration: const Duration(milliseconds: 200),
-                      transitionBuilder:
-                          (child, animation) => ScaleTransition(
+                      transitionBuilder: (child, animation) => ScaleTransition(
                         scale: animation,
                         child: child,
                       ),
@@ -229,11 +305,13 @@ class _AppSearchableDropdownState extends State<AppSearchableDropdown> {
                         key: ValueKey('arrow_icon'),
                       ),
                     ),
-                    dropdownMenuEntries: menuEntries,
+
+                    dropdownMenuEntries: entries,
                   ),
+
                   if (field.errorText != null)
                     Padding(
-                      padding: .only(top: 4, left: 4),
+                      padding: const EdgeInsets.only(top: 4, left: 4),
                       child: Text(
                         field.errorText!,
                         style: TextStyle(
@@ -251,4 +329,3 @@ class _AppSearchableDropdownState extends State<AppSearchableDropdown> {
     );
   }
 }
-
