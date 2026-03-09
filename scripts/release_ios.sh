@@ -153,7 +153,7 @@ else
   echo "⚠️ Not a git repository. Skipping git commit/tag."
 fi
 
-# 10. Generate App-Store style Release Notes (clean, no author, no refactor/chore noise)
+# 10. Generate user-friendly Release Notes via Claude API
 release_notes_file="$release_folder/RELEASE_NOTES.txt"
 
 last_tag="initial"
@@ -163,41 +163,59 @@ fi
 
 echo "🧾 Generating release notes from: $last_tag ..."
 
+# Collect raw git log (all commits, unfiltered — Claude will decide what's user-relevant)
 raw_log=$(git log "$last_tag"..HEAD --pretty=format:"%s" --no-merges 2>/dev/null || true)
 
-filtered_log=$(echo "$raw_log" | grep -Ev \
-  '^(🔖|chore:|refactor:|build:|ci:|style:|test:|docs:|bump|version|format|lint|pub get|clean|signing|release signing|update gradle)' \
-  || true)
+if [ -z "$raw_log" ]; then
+  friendly_notes="- Performance improvements and bug fixes."
+else
+  echo "✨ Rewriting release notes with Claude..."
 
-user_facing=$(echo "$filtered_log" | grep -E \
-  '^(feat:|fix:|perf:|improvement:|ui:|ux:|hotfix:|security:)' \
-  || true)
+  # Escape the raw log for safe JSON embedding
+  escaped_log=$(echo "$raw_log" | python3 -c "
+import sys, json
+lines = sys.stdin.read()
+print(json.dumps(lines))
+")
 
-if [ -z "$user_facing" ]; then
-  user_facing="$filtered_log"
+  api_response=$(curl -s https://api.anthropic.com/v1/messages \
+    -H "Content-Type: application/json" \
+    -H "x-api-key: $ANTHROPIC_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -d "{
+      \"model\": \"claude-sonnet-4-20250514\",
+      \"max_tokens\": 512,
+      \"messages\": [
+        {
+          \"role\": \"user\",
+          \"content\": \"You are writing App Store release notes for end users (not developers). Convert these raw git commit messages into clear, friendly, benefit-focused bullet points that a non-technical user would understand and appreciate. Rules:\\n- Max 6 bullet points\\n- Each bullet starts with a dash (-)\\n- Use plain English, no jargon, no commit prefixes (feat:, fix:, chore:, etc.)\\n- Focus on what the user can NOW do or experience differently\\n- Skip anything that is purely internal (refactor, lint, ci, build, deps, chore, style, test, version bump, signing, pub get, clean, gradle)\\n- Always end with this exact line as the final bullet: - Performance improvements and bug fixes.\\n- Output ONLY the bullet points, nothing else.\\n\\nCommit messages:\\n\" $escaped_log
+        }
+      ]
+    }")
+
+  # Extract text content from API response
+  friendly_notes=$(echo "$api_response" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    text = ''.join(block.get('text','') for block in data.get('content', []) if block.get('type') == 'text')
+    print(text.strip())
+except Exception as e:
+    print('- Performance improvements and bug fixes.')
+")
+
+  # Fallback if empty or API error
+  if [ -z "$friendly_notes" ]; then
+    friendly_notes="- Performance improvements and bug fixes."
+  fi
 fi
-
-cleaned=$(echo "$user_facing" \
-  | sed -E 's/^(feat:|fix:|perf:|improvement:|ui:|ux:|hotfix:|security:)[ ]*//I' \
-  | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' \
-  | awk 'NF')
-
-deduped=$(echo "$cleaned" | awk '!seen[$0]++')
-final_list=$(echo "$deduped" | head -n 8)
-
-if [ -z "$final_list" ]; then
-  final_list="Performance improvements and bug fixes."
-fi
-
-# shellcheck disable=SC2001
-bullets=$(echo "$final_list" | sed 's/^/- /')
 
 cat > "$release_notes_file" <<EOL
 Release name: $release_name
 Version: $next_version ($next_build_number)
 
 What's New:
-$bullets
+$friendly_notes
 EOL
 
 echo "✅ Release notes saved at: $release_notes_file"
