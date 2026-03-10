@@ -29,7 +29,6 @@ abstract class BaseService {
     }
 
     try {
-      logger.info('[BaseService][$operation] Starting request...');
       final response = await request();
       final data = response.data;
 
@@ -38,10 +37,6 @@ abstract class BaseService {
       );
 
       final result = BaseApiResponse<T>.fromHttp(response, fromJson);
-
-      logger.info(
-        '[BaseService][$operation] Completed with success=${result.success} (status=${result.statusCode})',
-      );
 
       return result;
     } on AppException catch (e) {
@@ -108,11 +103,7 @@ abstract class BaseService {
     }
 
     try {
-      logger.info('[BaseService][$operation] Starting async task...');
       final result = await task();
-      logger.info(
-        '[BaseService][$operation] Completed with success=${result.success} (status=${result.statusCode})',
-      );
       return result;
     } catch (e, stackTrace) {
       logger.error(

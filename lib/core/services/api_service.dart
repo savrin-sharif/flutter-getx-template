@@ -6,7 +6,6 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:get/get.dart' show Get, GetNavigation;
 import 'package:get_storage/get_storage.dart';
-import 'package:logger/logger.dart';
 
 import '../../shared/widgets/snack_bar/app_snack_bar.dart';
 import '../routes/app_routes.dart';
@@ -28,134 +27,335 @@ class AppException implements Exception {
 /// ===========================================================================
 ///                            LOGGER SERVICE
 /// ===========================================================================
+///
+/// Each HTTP call is printed as ONE unified block:
+///
+///   ┌──────────────────────────────────────────────────────────────────────
+///   │  2026-03-10 12:36:05
+///   ├┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+///   │  ━━  REQUEST                        (bold blue)
+///   │
+///   │  [GET]  https://example.com/        (method badge + cyan URL)
+///   │
+///   │  📑  HEADERS
+///   │     Authorization: Bearer eyJ…kU   (dim key : white value)
+///   │
+///   │  📦  BODY
+///   │     empty                           (green)
+///   ├┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+///   │  ━━  RESPONSE  200 OK               (bold green / yellow / red)
+///   │
+///   │  📄  BODY
+///   │     {                               (JSON: red keys, blue strings)
+///   │       "success": true,
+///   │       …
+///   │     }
+///   └──────────────────────────────────────────────────────────────────────
+///
+/// Design rule: every line is a single print() call so ANSI codes are never
+/// split across debugPrint's 800-char truncation boundary.
+///
 class LoggerService {
-  // Singleton instance
   static final LoggerService _instance = LoggerService._internal();
   factory LoggerService() => _instance;
   LoggerService._internal();
 
-  // Create logger with PrettyPrinter config
-  final Logger _logger = Logger(
-    printer: PrettyPrinter(
-      methodCount: 0,
-      errorMethodCount: 0,
-      lineLength: 40,
-      colors: true,
-      levelColors: PrettyPrinter.defaultLevelColors,
-      printEmojis: true,
-      dateTimeFormat: DateTimeFormat.dateAndTime,
-    ),
-  );
+  // ── ANSI ─────────────────────────────────────────────────────────────────
+  static const _r   = '\x1B[0m';
+  static const _b   = '\x1B[1m';
+  static const _dim = '\x1B[2m';
 
-  /// Log debug level message
-  void debug(String message) {
-    _logger.d(message);
+  static const _green  = '\x1B[32m';
+  static const _cyan   = '\x1B[36m';
+  static const _white  = '\x1B[37m';
+
+  static const _bRed    = '\x1B[91m';
+  static const _bGreen  = '\x1B[92m';
+  static const _bYellow = '\x1B[93m';
+  static const _bBlue   = '\x1B[94m';
+
+  // JSON syntax colours
+  static const _jKey   = '\x1B[31m';        // light red     → keys
+  static const _jStr   = '\x1B[94m';        // bright blue   → string values
+  static const _jNum   = '\x1B[92m';        // bright green  → numbers
+  static const _jBool  = '\x1B[93m';        // bright yellow → true / false
+  static const _jNull  = '\x1B[1m\x1B[37m'; // bold white    → null
+  static const _jPunch = '\x1B[37m';        // white         → { } [ ] , :
+
+  // ── Box-drawing ───────────────────────────────────────────────────────────
+  static const _boxW  = 72;
+  static const _boxTl = '┌';
+  static const _boxMl = '├';
+  static const _boxBl = '└';
+  static const _boxVl = '│';
+  static const _boxHr = '─';
+  static const _boxDs = '┄';
+
+  // ── Request buffer (keyed by full URI string) ─────────────────────────────
+  final _pending = <String, _ReqBuf>{};
+
+  // ── Diagnostic helpers ────────────────────────────────────────────────────
+
+  void debug(String msg)   => _log(_dim,     '🐛', 'DEBUG', msg);
+  void verbose(String msg) => _log(_dim,     '💬', 'TRACE', msg);
+  void info(String msg)    => _log(_cyan,    '💡', 'INFO',  msg);
+  void warn(String msg)    => _log(_bYellow, '⚠️ ', 'WARN',  msg);
+
+  void error(String msg, [dynamic err, StackTrace? st]) {
+    final parts = [msg];
+    if (err != null) { parts.add('Error: $err'); }
+    if (st  != null) { parts.add('Stack:\n$st'); }
+    _log(_bRed, '❌', 'ERROR', parts.join('\n'));
   }
 
-  /// Log verbose level message
-  void verbose(String message) {
-    _logger.t(message);
+  // ── HTTP API ──────────────────────────────────────────────────────────────
+
+  /// Called from onRequest interceptor. Stores the request; prints nothing yet.
+  /// [key] must be the same value passed to [logResponse] — use uri.toString().
+  void logRequest(
+      String method,
+      Uri uri, {
+        Map<String, dynamic>? headers,
+        dynamic payload,
+        required String key,
+      }) {
+    _pending[key] = _ReqBuf(
+      method  : method,
+      uri     : uri,
+      headers : headers ?? {},
+      payload : payload,
+      ts      : DateTime.now(),
+    );
   }
 
-  /// Log info level message
-  void info(String message) {
-    _logger.i(message);
-  }
+  /// Called from onResponse / onError interceptor.
+  /// Pops the matching request buffer and prints both in one block.
+  /// [key] must equal the value used in [logRequest] — use requestOptions.uri.toString().
+  void logResponse(
+      int? statusCode,
+      dynamic data, {
+        required String key,
+      }) {
+    final buf = _pending.remove(key);
 
-  /// Log warning level message
-  void warn(String message) {
-    _logger.w(message);
-  }
+    final code       = statusCode ?? 0;
+    final is2xx      = code >= 200 && code < 300;
+    final is3xx      = code >= 300 && code < 400;
+    final respColor  = is2xx ? _bGreen : (is3xx ? _bYellow : _bRed);
+    final statusText = _httpStatusText(code);
 
-  /// Log error level message with optional error object and stack trace
-  void error(String message, [dynamic error, StackTrace? stackTrace]) {
-    _logger.e(message, error: error, stackTrace: stackTrace);
-  }
+    final dBar = '$_dim${_boxDs * _boxW}$_r';
+    final vl   = '$_b$_white$_boxVl$_r';
 
-  /// Log HTTP request method and URI
-  void logRequest(String method, Uri uri) {
-    _logger.i('📡 [REQUEST] $method => $uri');
-  }
+    final lines = <String>[];
 
-  /// Log HTTP headers map
-  void logHeaders(Map<String, dynamic> headers) {
-    final maskedHeaders = Map<String, dynamic>.from(headers);
+    // ── top + timestamp ───────────────────────────────────────────────────
+    lines.add('$_b$_white$_boxTl${_boxHr * _boxW}$_r');
+    lines.add('$vl  $_dim${_ts(buf?.ts ?? DateTime.now())}$_r');
 
-    if (maskedHeaders.containsKey('Authorization')) {
-      final auth = maskedHeaders['Authorization'].toString();
-      final token = auth.replaceFirst('Bearer ', '');
-      final masked = token.length > 12
-          ? 'Bearer ${token.substring(0, 6)}...${token.substring(token.length - 6)}'
-          : auth;
+    // ── REQUEST section ───────────────────────────────────────────────────
+    if (buf != null) {
+      lines.add('$_boxMl$dBar');
+      lines.add('$vl  $_b$_bBlue━━  REQUEST$_r');
+      lines.add(vl);
 
-      maskedHeaders['Authorization'] = masked;
-    }
+      final mc = _methodClr(buf.method);
+      lines.add('$vl  $mc$_b[${buf.method}]$_r  $_cyan${buf.uri}$_r');
+      lines.add(vl);
 
-    _logger.i('📑 [HEADERS] => $maskedHeaders');
-  }
+      // headers
+      lines.add('$vl  $_b$_white📑  HEADERS$_r');
+      _maskHeaders(buf.headers).forEach((k, v) {
+        lines.add('$vl     $_dim$k$_r $_white$v$_r');
+      });
+      lines.add(vl);
 
-  /// Log HTTP payload (request body or form data)
-  void logPayload(dynamic payload) {
-    if (payload == null) {
-      _logger.i('📦 [PAYLOAD] => <empty>');
-      return;
-    }
-
-    // Pretty-print JSON-like maps/lists
-    if (payload is Map || payload is List) {
-      try {
-        _logger.i('📦 [PAYLOAD] => ${const JsonEncoder.withIndent('  ').convert(payload)}');
-      } catch (_) {
-        _logger.i('📦 [PAYLOAD] => $payload');
+      // body / payload
+      lines.add('$vl  $_b$_white📦  BODY$_r');
+      for (final l in _fmt(buf.payload).split('\n')) {
+        lines.add('$vl     $_green$l$_r');
       }
-      return;
     }
 
-    // Expand Dio FormData (fields + files)
+    // ── RESPONSE section ──────────────────────────────────────────────────
+    lines.add('$_boxMl$dBar');
+    lines.add('$vl  $respColor$_b━━  RESPONSE  $code $statusText$_r');
+    lines.add(vl);
+
+    final bodyStr = _json(data);
+    const maxLen  = 4000;
+    final clipped = bodyStr.length > maxLen;
+    final display = clipped ? bodyStr.substring(0, maxLen) : bodyStr;
+
+    lines.add('$vl  $_b$_white📄  BODY$_r');
+    for (final l in display.split('\n')) {
+      lines.add('$vl     ${_jsonLine(l)}');
+    }
+    if (clipped) {
+      lines.add('$vl     $_dim… truncated (${bodyStr.length} chars total)$_r');
+    }
+
+    // ── bottom border ─────────────────────────────────────────────────────
+    lines.add('$_b$_white$_boxBl${_boxHr * _boxW}$_r');
+
+    // Print every line individually — avoids debugPrint's 800-char truncation
+    for (final l in lines) {
+      // ignore: avoid_print
+      print(l);
+    }
+  }
+
+  // ── Private ───────────────────────────────────────────────────────────────
+
+  void _log(String color, String emoji, String level, String msg) {
+    final vl = '$_b$_white$_boxVl$_r';
+    final lines = <String>[
+      '$_b$_white$_boxTl${_boxHr * _boxW}$_r',
+      '$vl  $_dim${_ts(DateTime.now())}  [$level]$_r',
+      '$_boxMl$_dim${_boxDs * _boxW}$_r',
+      ...msg.split('\n').map((l) => '$vl  $color$emoji  $l$_r'),
+      '$_b$_white$_boxBl${_boxHr * _boxW}$_r',
+    ];
+    for (final l in lines) {
+      // ignore: avoid_print
+      print(l);
+    }
+  }
+
+  String _ts(DateTime dt) =>
+      '${dt.year}-${_p(dt.month)}-${_p(dt.day)} '
+          '${_p(dt.hour)}:${_p(dt.minute)}:${_p(dt.second)}';
+
+  String _p(int v) => v.toString().padLeft(2, '0');
+
+  String _methodClr(String m) {
+    switch (m.toUpperCase()) {
+      case 'GET':    return _bBlue;
+      case 'POST':   return _bGreen;
+      case 'PUT':    return _bYellow;
+      case 'PATCH':  return _bYellow;
+      case 'DELETE': return _bRed;
+      default:       return _white;
+    }
+  }
+
+  String _httpStatusText(int code) {
+    const map = {
+      200: 'OK', 201: 'Created', 204: 'No Content',
+      400: 'Bad Request', 401: 'Unauthorized', 403: 'Forbidden',
+      404: 'Not Found', 409: 'Conflict', 422: 'Unprocessable',
+      429: 'Too Many Requests', 500: 'Server Error', 503: 'Unavailable',
+    };
+    return map[code] ?? '';
+  }
+
+  Map<String, dynamic> _maskHeaders(Map<String, dynamic> h) {
+    final m = Map<String, dynamic>.from(h);
+    if (m.containsKey('Authorization')) {
+      final raw   = m['Authorization'].toString();
+      final token = raw.replaceFirst('Bearer ', '');
+      m['Authorization'] = token.length > 12
+          ? 'Bearer ${token.substring(0, 6)}…${token.substring(token.length - 6)}'
+          : raw;
+    }
+    return m;
+  }
+
+  String _fmt(dynamic payload) {
+    if (payload == null) { return '<empty>'; }
+    if (payload is Map || payload is List) {
+      try { return const JsonEncoder.withIndent('  ').convert(payload); }
+      catch (_) {}
+    }
     if (payload is FormData) {
-      final fields = <String, String>{for (final e in payload.fields) e.key: e.value};
-
-      // Don't dump raw bytes; summarize each file safely
-      final files = payload.files.map((e) {
-        final f = e.value;
-        return {
-          'key': e.key,
-          'filename': f.filename,
-          'contentType': f.contentType?.toString(),
-          // length may be null or expensive; include if available
-          'length': (() {
-            try {
-              return f.length;
-            } catch (_) {
-              return null;
-            }
-          })(),
-        };
+      final fields = {for (final e in payload.fields) e.key: e.value};
+      final files  = payload.files.map((e) => {
+        'key': e.key, 'filename': e.value.filename,
+        'contentType': e.value.contentType?.toString(),
       }).toList();
-
-      final summarized = {
-        'fields': fields,
-        'files': files,
-      };
-
-      _logger.i('📦 [PAYLOAD] => ${const JsonEncoder.withIndent('  ').convert(summarized)}');
-      return;
+      try { return const JsonEncoder.withIndent('  ').convert({'fields': fields, 'files': files}); }
+      catch (_) {}
     }
-
-    // Fallback
-    _logger.i('📦 [PAYLOAD] => $payload');
+    return payload.toString();
   }
 
-  /// Log HTTP response status code and data
-  void logResponse(int? statusCode, dynamic data) {
-    if (statusCode != null && statusCode >= 200 && statusCode < 300) {
-      _logger.i('✅ [RESPONSE $statusCode] => $data');
-    } else if (statusCode != null && statusCode < 400) {
-      _logger.w('⚠️ [RESPONSE $statusCode] => $data');
-    } else {
-      _logger.e('❌ [RESPONSE $statusCode] => $data');
+  String _json(dynamic data) {
+    if (data == null) { return '<empty>'; }
+    if (data is Map || data is List) {
+      try { return const JsonEncoder.withIndent('  ').convert(data); }
+      catch (_) {}
     }
+    return data.toString();
   }
+
+  /// Syntax-highlights a single line of pretty-printed JSON:
+  ///   keys          → light red
+  ///   string values → bright blue
+  ///   numbers       → bright green
+  ///   true / false  → bright yellow
+  ///   null          → bold white
+  ///   punctuation   → plain white
+  String _jsonLine(String line) {
+    final kvM = RegExp(r'^(\s*)("(?:[^"\\]|\\.)*")(\s*:\s*)(.+?)(,?)$')
+        .firstMatch(line);
+    if (kvM != null) {
+      return '${kvM[1]!}$_jKey${kvM[2]!}$_r'
+          '$_jPunch${kvM[3]!}$_r'
+          '${_colorValue(kvM[4]!)}'
+          '$_jPunch${kvM[5]!}$_r';
+    }
+
+    final trimmed = line.trimLeft();
+    final indent  = line.substring(0, line.length - trimmed.length);
+
+    if (RegExp(r'^[{}\[\]],?$').hasMatch(trimmed)) {
+      return '$indent$_jPunch$trimmed$_r';
+    }
+
+    if (trimmed.startsWith('"')) {
+      final comma = trimmed.endsWith(',') ? ',' : '';
+      final raw   = comma.isEmpty ? trimmed : trimmed.substring(0, trimmed.length - 1);
+      return '$indent$_jStr$raw$_r$_jPunch$comma$_r';
+    }
+
+    return '$indent${_colorValue(trimmed)}';
+  }
+
+  /// Returns the ANSI-coloured representation of a JSON value token.
+  String _colorValue(String v) {
+    final core  = v.endsWith(',') ? v.substring(0, v.length - 1) : v;
+    final comma = v.endsWith(',') ? ',' : '';
+
+    if (core == 'null') {
+      return '$_jNull$core$_r$_jPunch$comma$_r';
+    }
+    if (core == 'true' || core == 'false') {
+      return '$_jBool$core$_r$_jPunch$comma$_r';
+    }
+    if (RegExp(r'^-?\d+(\.\d+)?$').hasMatch(core)) {
+      return '$_jNum$core$_r$_jPunch$comma$_r';
+    }
+    if (core.startsWith('"')) {
+      return '$_jStr$core$_r$_jPunch$comma$_r';
+    }
+    return '$_jPunch$v$_r';
+  }
+}
+
+/// Holds a staged request until its matching response arrives.
+class _ReqBuf {
+  final String method;
+  final Uri    uri;
+  final Map<String, dynamic> headers;
+  final dynamic payload;
+  final DateTime ts;
+  _ReqBuf({
+    required this.method,
+    required this.uri,
+    required this.headers,
+    required this.payload,
+    required this.ts,
+  });
 }
 
 /// ===========================================================================
@@ -330,13 +530,21 @@ class ApiService {
     publicClient.interceptors.addAll([
       InterceptorsWrapper(
         onRequest: (options, handler) {
-          logger.logRequest(options.method, options.uri);
-          logger.logHeaders(options.headers);
-          logger.logPayload(options.data);
+          logger.logRequest(
+            options.method,
+            options.uri,
+            headers: options.headers,
+            payload: options.data,
+            key: options.uri.toString(),
+          );
           handler.next(options);
         },
         onResponse: (response, handler) {
-          logger.logResponse(response.statusCode, response.data);
+          logger.logResponse(
+            response.statusCode,
+            response.data,
+            key: response.requestOptions.uri.toString(),
+          );
           handler.next(response);
         },
         onError: (e, handler) {
@@ -379,15 +587,23 @@ class ApiService {
             options.headers['Authorization'] = 'Bearer $token';
           }
 
-          logger.logRequest(options.method, options.uri);
-          logger.logHeaders(options.headers);
-          logger.logPayload(options.data);
+          logger.logRequest(
+            options.method,
+            options.uri,
+            headers: options.headers,
+            payload: options.data,
+            key: options.uri.toString(),
+          );
 
           handler.next(options);
         },
 
         onResponse: (response, handler) {
-          logger.logResponse(response.statusCode, response.data);
+          logger.logResponse(
+            response.statusCode,
+            response.data,
+            key: response.requestOptions.uri.toString(),
+          );
           handler.next(response);
         },
 
