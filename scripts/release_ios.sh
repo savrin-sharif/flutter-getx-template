@@ -80,6 +80,22 @@ else
 fi
 echo "✅ Release Name: $release_name"
 
+# ──────────────────────────────────────────────────────────────────────────────
+# FIX: Capture the last tag BEFORE we create a new one in step 9.
+#      Use `git describe --tags --abbrev=0` against HEAD (not HEAD^) so we get
+#      the most-recent existing tag on any ancestor commit.
+#      If no tags exist at all, fall back to the very first commit so the log
+#      covers the entire history.
+# ──────────────────────────────────────────────────────────────────────────────
+last_tag=""
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  last_tag=$(git describe --tags --abbrev=0 2>/dev/null || true)
+  if [ -z "$last_tag" ]; then
+    # No tags at all — use the root commit so we get the full history
+    last_tag=$(git rev-list --max-parents=0 HEAD 2>/dev/null || true)
+  fi
+fi
+
 # 5. Update pubspec.yaml
 sed -i.bak -E "s/^version: .*/version: $next_version+$next_build_number/" pubspec.yaml
 rm -f pubspec.yaml.bak
@@ -156,15 +172,18 @@ fi
 # 10. Generate user-friendly Release Notes via Claude API
 release_notes_file="$release_folder/RELEASE_NOTES.txt"
 
-last_tag="initial"
-if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  last_tag=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "initial")
-fi
-
-echo "🧾 Generating release notes from: $last_tag ..."
+echo "🧾 Generating release notes since: ${last_tag:-'(beginning of history)'} ..."
 
 # Collect raw git log (all commits, unfiltered — Claude will decide what's user-relevant)
-raw_log=$(git log "$last_tag"..HEAD --pretty=format:"%s" --no-merges 2>/dev/null || true)
+# FIX: Use "$last_tag..HEAD" only when last_tag is a ref/tag name.
+#      When it's a commit SHA (first-commit fallback), the same syntax still works.
+#      This now runs AFTER the version-bump commit so it includes everything up to HEAD.
+if [ -n "$last_tag" ]; then
+  raw_log=$(git log "$last_tag"..HEAD --pretty=format:"%s" --no-merges 2>/dev/null || true)
+else
+  # Absolute fallback — no git repo or couldn't determine base
+  raw_log=""
+fi
 
 if [ -z "$raw_log" ]; then
   friendly_notes="- Performance improvements and bug fixes."
