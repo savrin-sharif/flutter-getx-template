@@ -27,34 +27,6 @@ class AppException implements Exception {
 /// ===========================================================================
 ///                            LOGGER SERVICE
 /// ===========================================================================
-///
-/// Each HTTP call is printed as ONE unified block:
-///
-///   ┌──────────────────────────────────────────────────────────────────────
-///   │  2026-03-10 12:36:05
-///   ├┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
-///   │  ━━  REQUEST                        (bold blue)
-///   │
-///   │  [GET]  https://example.com/        (method badge + cyan URL)
-///   │
-///   │  📑  HEADERS
-///   │     Authorization: Bearer eyJ…kU   (dim key : white value)
-///   │
-///   │  📦  BODY
-///   │     empty                           (green)
-///   ├┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
-///   │  ━━  RESPONSE  200 OK               (bold green / yellow / red)
-///   │
-///   │  📄  BODY
-///   │     {                               (JSON: red keys, blue strings)
-///   │       "success": true,
-///   │       …
-///   │     }
-///   └──────────────────────────────────────────────────────────────────────
-///
-/// Design rule: every line is a single print() call so ANSI codes are never
-/// split across debugPrint's 800-char truncation boundary.
-///
 class LoggerService {
   static final LoggerService _instance = LoggerService._internal();
   factory LoggerService() => _instance;
@@ -80,7 +52,7 @@ class LoggerService {
   static const _jNum   = '\x1B[92m';        // bright green  → numbers
   static const _jBool  = '\x1B[93m';        // bright yellow → true / false
   static const _jNull  = '\x1B[1m\x1B[37m'; // bold white    → null
-  static const _jPunch = '\x1B[37m';        // white         → { } [ ] , :
+  static const _jPunctuation = '\x1B[37m';        // white         → { } [ ] , :
 
   // ── Box-drawing ───────────────────────────────────────────────────────────
   static const _boxW  = 72;
@@ -300,22 +272,22 @@ class LoggerService {
         .firstMatch(line);
     if (kvM != null) {
       return '${kvM[1]!}$_jKey${kvM[2]!}$_r'
-          '$_jPunch${kvM[3]!}$_r'
+          '$_jPunctuation${kvM[3]!}$_r'
           '${_colorValue(kvM[4]!)}'
-          '$_jPunch${kvM[5]!}$_r';
+          '$_jPunctuation${kvM[5]!}$_r';
     }
 
     final trimmed = line.trimLeft();
     final indent  = line.substring(0, line.length - trimmed.length);
 
     if (RegExp(r'^[{}\[\]],?$').hasMatch(trimmed)) {
-      return '$indent$_jPunch$trimmed$_r';
+      return '$indent$_jPunctuation$trimmed$_r';
     }
 
     if (trimmed.startsWith('"')) {
       final comma = trimmed.endsWith(',') ? ',' : '';
       final raw   = comma.isEmpty ? trimmed : trimmed.substring(0, trimmed.length - 1);
-      return '$indent$_jStr$raw$_r$_jPunch$comma$_r';
+      return '$indent$_jStr$raw$_r$_jPunctuation$comma$_r';
     }
 
     return '$indent${_colorValue(trimmed)}';
@@ -327,18 +299,18 @@ class LoggerService {
     final comma = v.endsWith(',') ? ',' : '';
 
     if (core == 'null') {
-      return '$_jNull$core$_r$_jPunch$comma$_r';
+      return '$_jNull$core$_r$_jPunctuation$comma$_r';
     }
     if (core == 'true' || core == 'false') {
-      return '$_jBool$core$_r$_jPunch$comma$_r';
+      return '$_jBool$core$_r$_jPunctuation$comma$_r';
     }
     if (RegExp(r'^-?\d+(\.\d+)?$').hasMatch(core)) {
-      return '$_jNum$core$_r$_jPunch$comma$_r';
+      return '$_jNum$core$_r$_jPunctuation$comma$_r';
     }
     if (core.startsWith('"')) {
-      return '$_jStr$core$_r$_jPunch$comma$_r';
+      return '$_jStr$core$_r$_jPunctuation$comma$_r';
     }
-    return '$_jPunch$v$_r';
+    return '$_jPunctuation$v$_r';
   }
 }
 
@@ -548,15 +520,22 @@ class ApiService {
           handler.next(response);
         },
         onError: (e, handler) {
-          if (e.type == DioExceptionType.connectionError ||
-              e.message?.toLowerCase().contains('failed host lookup') == true) {
-            logger.error('[PUBLIC API ERROR] Connection Error');
+          final isConnectionError = e.type == DioExceptionType.connectionError ||
+              e.message?.toLowerCase().contains('failed host lookup') == true;
+
+          // Always flush the pending request buffer so REQUEST+RESPONSE appear together
+          logger.logResponse(
+            e.response?.statusCode ?? (isConnectionError ? 0 : -1),
+            e.response?.data ?? (isConnectionError ? 'Connection Error' : e.message),
+            key: e.requestOptions.uri.toString(),
+          );
+
+          if (isConnectionError) {
             showSnack(
               content: 'Check your internet or try again later',
               status: SnackBarStatus.disconnected,
             );
           } else {
-            logger.error('[PUBLIC API ERROR] ${e.message}');
             showSnack(
               content: 'Something went wrong. Please try again.',
               status: SnackBarStatus.error,
@@ -612,11 +591,16 @@ class ApiService {
           final responseBody = e.response?.data;
           final isUnauthorized = statusCode == 401 ||
               (statusCode == 403 && isUnauthorizedError(e.response?.data));
+          final isConnectionError = e.type == DioExceptionType.connectionError ||
+              e.message?.toLowerCase().contains('failed host lookup') == true;
 
-          // Connectivity error
-          if (e.type == DioExceptionType.connectionError ||
-              e.message?.toLowerCase().contains('failed host lookup') == true) {
-            logger.error('[PRIVATE API ERROR] Connection Error: ${e.message}');
+          // Connectivity error — flush buffer with no-network indicator
+          if (isConnectionError) {
+            logger.logResponse(
+              0,
+              'Connection Error',
+              key: e.requestOptions.uri.toString(),
+            );
             showSnack(
               content: 'Check your internet or try again later',
               status: SnackBarStatus.disconnected,
@@ -624,8 +608,13 @@ class ApiService {
             return handler.next(e);
           }
 
+          // Non-auth error (400, 422, 500, etc.) — flush buffer with real response body
           if (!isUnauthorized) {
-            logger.error('[PRIVATE API ERROR] ${e.message} | body: $responseBody');
+            logger.logResponse(
+              statusCode,
+              responseBody,
+              key: e.requestOptions.uri.toString(),
+            );
             return handler.next(e);
           }
 

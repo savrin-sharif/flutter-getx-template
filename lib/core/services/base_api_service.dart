@@ -55,12 +55,7 @@ abstract class BaseService {
       final isConnectionError = e.type == DioExceptionType.connectionError ||
           (e.message?.toLowerCase().contains('failed host lookup') ?? false);
 
-      logger.error(
-        '[BaseService][$operation] DioException: ${e.message}',
-        e,
-      );
-      debugPrint('safeRequest[$operation]: isConnectionError: $isConnectionError');
-
+      // Interceptor already logged this — no duplicate error block needed
       return BaseApiResponse<T>(
         success: false,
         message: isConnectionError
