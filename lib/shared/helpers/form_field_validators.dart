@@ -1,4 +1,4 @@
-import 'enums/form_field_type.dart';
+import '../widgets/text_form_field/app_text_form_field.dart';
 
 String? validateField(String? value, FormFieldType type, [String? originalPassword]) {
   final trimmed = value?.trim() ?? '';
@@ -10,6 +10,7 @@ String? validateField(String? value, FormFieldType type, [String? originalPasswo
     if (type == FormFieldType.password) return 'Password is required';
     if (type == FormFieldType.confirmPassword) return 'Confirm password is required';
     if (type == FormFieldType.number) return 'Number is required';
+    if (type == FormFieldType.amount) return 'Amount is required';
     if (type == FormFieldType.name) return 'Name is required';
     if (type == FormFieldType.dob) return 'Date of birth is required';
     return 'This field is required';
@@ -30,6 +31,9 @@ String? validateField(String? value, FormFieldType type, [String? originalPasswo
     if (originalPassword != null && trimmed != originalPassword.trim()) return 'Passwords do not match';
   } else if (type == FormFieldType.number) {
     if (double.tryParse(trimmed) == null) return 'Invalid number';
+  } else if (type == FormFieldType.amount) {
+    final cleaned = trimmed.replaceAll(',', '');
+    if (double.tryParse(cleaned) == null) return 'Invalid amount';
   }
 
   return null;

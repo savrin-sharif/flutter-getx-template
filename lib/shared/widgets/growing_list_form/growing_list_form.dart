@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import '../../helpers/enums/form_field_type.dart';
 import '../../helpers/form_field_validators.dart';
 import '../text_form_field/app_text_form_field.dart';
 
@@ -169,7 +168,7 @@ class _GrowingListFormState extends State<GrowingListForm> {
                       }
 
                       if (widget.isRequired == true) {
-                        return validateField(value, FormFieldType.general);
+                        return validateField(value, .general);
                       }
 
                       return null;
@@ -186,7 +185,7 @@ class _GrowingListFormState extends State<GrowingListForm> {
                     controller: _valueControllers[index],
                     label: '$valueLabel ${index + 1}',
                     validator: widget.isRequired == true
-                        ? (value) => validateField(value, FormFieldType.amount)
+                        ? (value) => validateField(value, .amount)
                         : (_) => null,
                   ),
                 ),

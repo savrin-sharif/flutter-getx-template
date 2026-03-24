@@ -1,6 +1,6 @@
 import 'package:flutter/services.dart';
 
-import 'enums/form_field_type.dart';
+import '../widgets/text_form_field/app_text_form_field.dart';
 
 List<TextInputFormatter>? getInputFormatters(FormFieldType type) {
   switch (type) {
@@ -10,8 +10,10 @@ List<TextInputFormatter>? getInputFormatters(FormFieldType type) {
       return [FilteringTextInputFormatter.digitsOnly];
     case FormFieldType.email:
       return [FilteringTextInputFormatter.deny(RegExp(r"\s"))];
-    case FormFieldType.number || FormFieldType.amount || FormFieldType.percentage:
+    case FormFieldType.number:
       return [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))];
+    case FormFieldType.amount:
+      return [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))];
     case FormFieldType.password:
     case FormFieldType.confirmPassword:
       return null;
