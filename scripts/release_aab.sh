@@ -7,8 +7,9 @@ set -e
 
 # 0. Ask user for version bump type
 echo "🔢 Select version bump type:"
-select bump_type in "MAJOR" "MINOR" "PATCH" "Custom"; do
+select bump_type in "AUTO" "MAJOR" "MINOR" "PATCH" "Custom"; do
   case $bump_type in
+    AUTO) bump_level="AUTO"; break ;;
     MAJOR) bump_level="MAJOR"; break ;;
     MINOR) bump_level="MINOR"; break ;;
     PATCH) bump_level="PATCH"; break ;;
@@ -39,21 +40,72 @@ current_build_number=$(echo "$current_version_line" | sed -E 's/.*\+([0-9]+)/\1/
 
 echo "📋 Current version: $current_version +$current_build_number"
 
-# 3. Determine next version
-IFS='.' read -r major minor patch <<< "$current_version"
+# 2.1 Resolve AUTO baseline from last Android bump tag
+auto_base_version="$current_version"
+auto_base_build="$current_build_number"
+auto_detected_bump="PATCH"
+android_last_bump_tag=""
 
-if [ "$bump_level" == "MAJOR" ]; then
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  android_last_bump_tag=$(git tag --list --sort=-creatordate \
+    | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+$' \
+    | head -n 1)
+fi
+
+if [ "$bump_level" == "AUTO" ]; then
+  if [ -n "$android_last_bump_tag" ]; then
+    auto_base_version=$(echo "$android_last_bump_tag" | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+)\+[0-9]+$/\1/')
+    auto_base_build=$(echo "$android_last_bump_tag" | sed -E 's/^v[0-9]+\.[0-9]+\.[0-9]+\+([0-9]+)$/\1/')
+    auto_log=$(git log "$android_last_bump_tag"..HEAD --pretty=format:"%s%n%b" --no-merges 2>/dev/null || true)
+
+    if echo "$auto_log" | grep -Eqi 'BREAKING CHANGE|^[[:alpha:]][[:alnum:]_-]*(\([^)]+\))?!:'; then
+      auto_detected_bump="MAJOR"
+    elif echo "$auto_log" | grep -Eqi '^feat(\([^)]+\))?:'; then
+      auto_detected_bump="MINOR"
+    else
+      auto_detected_bump="PATCH"
+    fi
+
+    echo "🤖 AUTO base tag: $android_last_bump_tag (detected $auto_detected_bump bump)"
+  else
+    echo "🤖 AUTO: No Android bump tag found. Falling back to PATCH from pubspec version."
+  fi
+fi
+
+# 3. Determine next version
+resolved_bump_level="$bump_level"
+version_seed="$current_version"
+if [ "$bump_level" == "AUTO" ]; then
+  resolved_bump_level="$auto_detected_bump"
+  version_seed="$auto_base_version"
+fi
+
+IFS='.' read -r major minor patch <<< "$version_seed"
+
+if [ "$resolved_bump_level" == "MAJOR" ]; then
   major=$((major + 1)); minor=0; patch=0
   next_version="$major.$minor.$patch"
-  echo "🚀 MAJOR bump: $current_version ➜ $next_version"
-elif [ "$bump_level" == "MINOR" ]; then
+  if [ "$bump_level" == "AUTO" ]; then
+    echo "🤖 AUTO resolved to MAJOR: $version_seed ➜ $next_version"
+  else
+    echo "🚀 MAJOR bump: $current_version ➜ $next_version"
+  fi
+elif [ "$resolved_bump_level" == "MINOR" ]; then
   minor=$((minor + 1)); patch=0
   next_version="$major.$minor.$patch"
-  echo "✨ MINOR bump: $current_version ➜ $next_version"
-elif [ "$bump_level" == "PATCH" ]; then
+  if [ "$bump_level" == "AUTO" ]; then
+    echo "🤖 AUTO resolved to MINOR: $version_seed ➜ $next_version"
+  else
+    echo "✨ MINOR bump: $current_version ➜ $next_version"
+  fi
+elif [ "$resolved_bump_level" == "PATCH" ]; then
   patch=$((patch + 1))
   next_version="$major.$minor.$patch"
-  echo "🔧 PATCH bump: $current_version ➜ $next_version"
+  if [ "$bump_level" == "AUTO" ]; then
+    echo "🤖 AUTO resolved to PATCH: $version_seed ➜ $next_version"
+  else
+    echo "🔧 PATCH bump: $current_version ➜ $next_version"
+  fi
 elif [ "$bump_level" == "CUSTOM" ]; then
   if ! echo "$new_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
     echo "❌ Invalid custom version format. Use x.y.z (e.g., 2.1.0)"
@@ -64,8 +116,12 @@ elif [ "$bump_level" == "CUSTOM" ]; then
 fi
 
 # 4. Always increment build number
-next_build_number=$((current_build_number + 1))
-echo "🔼 Build number incremented: $current_build_number ➜ $next_build_number"
+build_seed="$current_build_number"
+if [ "$bump_level" == "AUTO" ] && [ "$auto_base_build" -gt "$build_seed" ]; then
+  build_seed="$auto_base_build"
+fi
+next_build_number=$((build_seed + 1))
+echo "🔼 Build number incremented: $build_seed ➜ $next_build_number"
 
 # 4.1 Release name (for Play Console - internal)
 # Optional override prompt
