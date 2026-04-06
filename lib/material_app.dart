@@ -6,7 +6,6 @@ import 'core/routes/app_pages.dart';
 import 'core/routes/app_routes.dart';
 import 'core/services/api_service.dart';
 import 'core/themes/app_theme.dart';
-import 'shared/widgets/scaffold/app_scaffold.dart';
 
 class TemplateApp extends StatelessWidget {
   const TemplateApp({super.key});
