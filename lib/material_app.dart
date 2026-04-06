@@ -29,7 +29,6 @@ class TemplateApp extends StatelessWidget {
       initialBinding: GlobalBindings(),
       initialRoute: _getInitialRoute(),
       getPages: AppPages.pages,
-      home: const AppScaffold(),
     );
   }
 }
