@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 
 import 'api_service.dart';
 import 'base_api_response.dart';
+import '../translations/app_strings.dart';
 
 abstract class BaseService {
   final ApiService api = ApiService.instance;
@@ -22,7 +23,7 @@ abstract class BaseService {
       logger.warn('[BaseService][$operation] Blocked: no internet');
       return BaseApiResponse<T>(
         success: false,
-        message: 'No internet connection',
+        message: AppStrings.commonNoInternetConnection,
         data: null,
         statusCode: null,
       );
@@ -45,24 +46,46 @@ abstract class BaseService {
         '[BaseService][$operation] AppException: ${e.message} (status=${e.statusCode})',
         e,
       );
+      final body = e.body;
+      final errors =
+          body is Map<String, dynamic> && body['errors'] is Map<String, dynamic>
+          ? body['errors'] as Map<String, dynamic>
+          : null;
+      final message = body is Map<String, dynamic> && body['message'] != null
+          ? body['message'].toString()
+          : e.message;
+
       return BaseApiResponse<T>(
         success: false,
-        message: e.message,
+        message: message,
         data: null,
         statusCode: e.statusCode,
+        errors: errors,
+        raw: body,
       );
     } on DioException catch (e) {
-      final isConnectionError = e.type == DioExceptionType.connectionError ||
+      final isConnectionError =
+          e.type == DioExceptionType.connectionError ||
           (e.message?.toLowerCase().contains('failed host lookup') ?? false);
+      final body = e.response?.data;
+      final errors =
+          body is Map<String, dynamic> && body['errors'] is Map<String, dynamic>
+          ? body['errors'] as Map<String, dynamic>
+          : null;
+      final message = body is Map<String, dynamic> && body['message'] != null
+          ? body['message'].toString()
+          : isConnectionError
+          ? AppStrings.commonCheckYourInternetOrTryAgainLater
+          : AppStrings.commonSomethingWentWrongPleaseTryAgain;
 
       // Interceptor already logged this — no duplicate error block needed
       return BaseApiResponse<T>(
         success: false,
-        message: isConnectionError
-            ? 'Check your internet or try again later'
-            : 'Something went wrong. Please try again',
+        message: message,
         data: null,
         statusCode: e.response?.statusCode,
+        errors: errors,
+        raw: body,
       );
     } catch (e, stackTrace) {
       logger.error(
@@ -73,9 +96,10 @@ abstract class BaseService {
 
       return BaseApiResponse<T>(
         success: false,
-        message: 'Something went wrong. Please try again',
+        message: AppStrings.commonSomethingWentWrongPleaseTryAgain,
         data: null,
         statusCode: null,
+        raw: e,
       );
     }
   }
@@ -91,7 +115,7 @@ abstract class BaseService {
       logger.warn('[BaseService][$operation] Blocked: no internet');
       return BaseApiResponse<T>(
         success: false,
-        message: 'No internet connection',
+        message: AppStrings.commonNoInternetConnection,
         data: null,
         statusCode: null,
       );
@@ -109,7 +133,7 @@ abstract class BaseService {
 
       return BaseApiResponse<T>(
         success: false,
-        message: 'Something went wrong. Please try again',
+        message: AppStrings.commonSomethingWentWrongPleaseTryAgain,
         data: null,
         statusCode: null,
       );

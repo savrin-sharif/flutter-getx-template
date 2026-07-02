@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:dio/dio.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -9,6 +10,7 @@ import 'package:get_storage/get_storage.dart';
 
 import '../../shared/widgets/snack_bar/app_snack_bar.dart';
 import '../routes/app_routes.dart';
+import '../translations/app_strings.dart';
 
 /// ===========================================================================
 ///                            ERROR UTILITIES
@@ -33,29 +35,29 @@ class LoggerService {
   LoggerService._internal();
 
   // ── ANSI ─────────────────────────────────────────────────────────────────
-  static const _r   = '\x1B[0m';
-  static const _b   = '\x1B[1m';
+  static const _r = '\x1B[0m';
+  static const _b = '\x1B[1m';
   static const _dim = '\x1B[2m';
 
-  static const _green  = '\x1B[32m';
-  static const _cyan   = '\x1B[36m';
-  static const _white  = '\x1B[37m';
+  static const _green = '\x1B[32m';
+  static const _cyan = '\x1B[36m';
+  static const _white = '\x1B[37m';
 
-  static const _bRed    = '\x1B[91m';
-  static const _bGreen  = '\x1B[92m';
+  static const _bRed = '\x1B[91m';
+  static const _bGreen = '\x1B[92m';
   static const _bYellow = '\x1B[93m';
-  static const _bBlue   = '\x1B[94m';
+  static const _bBlue = '\x1B[94m';
 
   // JSON syntax colours
-  static const _jKey   = '\x1B[31m';        // light red     → keys
-  static const _jStr   = '\x1B[94m';        // bright blue   → string values
-  static const _jNum   = '\x1B[92m';        // bright green  → numbers
-  static const _jBool  = '\x1B[93m';        // bright yellow → true / false
-  static const _jNull  = '\x1B[1m\x1B[37m'; // bold white    → null
-  static const _jPunctuation = '\x1B[37m';        // white         → { } [ ] , :
+  static const _jKey = '\x1B[31m'; // light red     → keys
+  static const _jStr = '\x1B[94m'; // bright blue   → string values
+  static const _jNum = '\x1B[92m'; // bright green  → numbers
+  static const _jBool = '\x1B[93m'; // bright yellow → true / false
+  static const _jNull = '\x1B[1m\x1B[37m'; // bold white    → null
+  static const _jPunctuation = '\x1B[37m'; // white         → { } [ ] , :
 
   // ── Box-drawing ───────────────────────────────────────────────────────────
-  static const _boxW  = 72;
+  static const _boxW = 72;
   static const _boxTl = '┌';
   static const _boxMl = '├';
   static const _boxBl = '└';
@@ -68,15 +70,19 @@ class LoggerService {
 
   // ── Diagnostic helpers ────────────────────────────────────────────────────
 
-  void debug(String msg)   => _log(_dim,     '🐛', 'DEBUG', msg);
-  void verbose(String msg) => _log(_dim,     '💬', 'TRACE', msg);
-  void info(String msg)    => _log(_cyan,    '💡', 'INFO',  msg);
-  void warn(String msg)    => _log(_bYellow, '⚠️ ', 'WARN',  msg);
+  void debug(String msg) => _log(_dim, '🐛', 'DEBUG', msg);
+  void verbose(String msg) => _log(_dim, '💬', 'TRACE', msg);
+  void info(String msg) => _log(_cyan, '💡', 'INFO', msg);
+  void warn(String msg) => _log(_bYellow, '⚠️ ', 'WARN', msg);
 
   void error(String msg, [dynamic err, StackTrace? st]) {
     final parts = [msg];
-    if (err != null) { parts.add('Error: $err'); }
-    if (st  != null) { parts.add('Stack:\n$st'); }
+    if (err != null) {
+      parts.add('Error: $err');
+    }
+    if (st != null) {
+      parts.add('Stack:\n$st');
+    }
     _log(_bRed, '❌', 'ERROR', parts.join('\n'));
   }
 
@@ -85,39 +91,35 @@ class LoggerService {
   /// Called from onRequest interceptor. Stores the request; prints nothing yet.
   /// [key] must be the same value passed to [logResponse] — use uri.toString().
   void logRequest(
-      String method,
-      Uri uri, {
-        Map<String, dynamic>? headers,
-        dynamic payload,
-        required String key,
-      }) {
+    String method,
+    Uri uri, {
+    Map<String, dynamic>? headers,
+    dynamic payload,
+    required String key,
+  }) {
     _pending[key] = _ReqBuf(
-      method  : method,
-      uri     : uri,
-      headers : headers ?? {},
-      payload : payload,
-      ts      : DateTime.now(),
+      method: method,
+      uri: uri,
+      headers: headers ?? {},
+      payload: payload,
+      ts: DateTime.now(),
     );
   }
 
   /// Called from onResponse / onError interceptor.
   /// Pops the matching request buffer and prints both in one block.
   /// [key] must equal the value used in [logRequest] — use requestOptions.uri.toString().
-  void logResponse(
-      int? statusCode,
-      dynamic data, {
-        required String key,
-      }) {
+  void logResponse(int? statusCode, dynamic data, {required String key}) {
     final buf = _pending.remove(key);
 
-    final code       = statusCode ?? 0;
-    final is2xx      = code >= 200 && code < 300;
-    final is3xx      = code >= 300 && code < 400;
-    final respColor  = is2xx ? _bGreen : (is3xx ? _bYellow : _bRed);
+    final code = statusCode ?? 0;
+    final is2xx = code >= 200 && code < 300;
+    final is3xx = code >= 300 && code < 400;
+    final respColor = is2xx ? _bGreen : (is3xx ? _bYellow : _bRed);
     final statusText = _httpStatusText(code);
 
     final dBar = '$_dim${_boxDs * _boxW}$_r';
-    final vl   = '$_b$_white$_boxVl$_r';
+    final vl = '$_b$_white$_boxVl$_r';
 
     final lines = <String>[];
 
@@ -155,7 +157,7 @@ class LoggerService {
     lines.add(vl);
 
     final bodyStr = _json(data);
-    const maxLen  = 4000;
+    const maxLen = 4000;
     final clipped = bodyStr.length > maxLen;
     final display = clipped ? bodyStr.substring(0, maxLen) : bodyStr;
 
@@ -196,27 +198,41 @@ class LoggerService {
 
   String _ts(DateTime dt) =>
       '${dt.year}-${_p(dt.month)}-${_p(dt.day)} '
-          '${_p(dt.hour)}:${_p(dt.minute)}:${_p(dt.second)}';
+      '${_p(dt.hour)}:${_p(dt.minute)}:${_p(dt.second)}';
 
   String _p(int v) => v.toString().padLeft(2, '0');
 
   String _methodClr(String m) {
     switch (m.toUpperCase()) {
-      case 'GET':    return _bBlue;
-      case 'POST':   return _bGreen;
-      case 'PUT':    return _bYellow;
-      case 'PATCH':  return _bYellow;
-      case 'DELETE': return _bRed;
-      default:       return _white;
+      case 'GET':
+        return _bBlue;
+      case 'POST':
+        return _bGreen;
+      case 'PUT':
+        return _bYellow;
+      case 'PATCH':
+        return _bYellow;
+      case 'DELETE':
+        return _bRed;
+      default:
+        return _white;
     }
   }
 
   String _httpStatusText(int code) {
     const map = {
-      200: 'OK', 201: 'Created', 204: 'No Content',
-      400: 'Bad Request', 401: 'Unauthorized', 403: 'Forbidden',
-      404: 'Not Found', 409: 'Conflict', 422: 'Unprocessable',
-      429: 'Too Many Requests', 500: 'Server Error', 503: 'Unavailable',
+      200: 'OK',
+      201: 'Created',
+      204: 'No Content',
+      400: 'Bad Request',
+      401: 'Unauthorized',
+      403: 'Forbidden',
+      404: 'Not Found',
+      409: 'Conflict',
+      422: 'Unprocessable',
+      429: 'Too Many Requests',
+      500: 'Server Error',
+      503: 'Unavailable',
     };
     return map[code] ?? '';
   }
@@ -224,7 +240,7 @@ class LoggerService {
   Map<String, dynamic> _maskHeaders(Map<String, dynamic> h) {
     final m = Map<String, dynamic>.from(h);
     if (m.containsKey('Authorization')) {
-      final raw   = m['Authorization'].toString();
+      final raw = m['Authorization'].toString();
       final token = raw.replaceFirst('Bearer ', '');
       m['Authorization'] = token.length > 12
           ? 'Bearer ${token.substring(0, 6)}…${token.substring(token.length - 6)}'
@@ -234,28 +250,42 @@ class LoggerService {
   }
 
   String _fmt(dynamic payload) {
-    if (payload == null) { return '<empty>'; }
+    if (payload == null) {
+      return '<empty>';
+    }
     if (payload is Map || payload is List) {
-      try { return const JsonEncoder.withIndent('  ').convert(payload); }
-      catch (_) {}
+      try {
+        return const JsonEncoder.withIndent('  ').convert(payload);
+      } catch (_) {}
     }
     if (payload is FormData) {
       final fields = {for (final e in payload.fields) e.key: e.value};
-      final files  = payload.files.map((e) => {
-        'key': e.key, 'filename': e.value.filename,
-        'contentType': e.value.contentType?.toString(),
-      }).toList();
-      try { return const JsonEncoder.withIndent('  ').convert({'fields': fields, 'files': files}); }
-      catch (_) {}
+      final files = payload.files
+          .map(
+            (e) => {
+              'key': e.key,
+              'filename': e.value.filename,
+              'contentType': e.value.contentType?.toString(),
+            },
+          )
+          .toList();
+      try {
+        return const JsonEncoder.withIndent(
+          '  ',
+        ).convert({'fields': fields, 'files': files});
+      } catch (_) {}
     }
     return payload.toString();
   }
 
   String _json(dynamic data) {
-    if (data == null) { return '<empty>'; }
+    if (data == null) {
+      return '<empty>';
+    }
     if (data is Map || data is List) {
-      try { return const JsonEncoder.withIndent('  ').convert(data); }
-      catch (_) {}
+      try {
+        return const JsonEncoder.withIndent('  ').convert(data);
+      } catch (_) {}
     }
     return data.toString();
   }
@@ -268,8 +298,9 @@ class LoggerService {
   ///   null          → bold white
   ///   punctuation   → plain white
   String _jsonLine(String line) {
-    final kvM = RegExp(r'^(\s*)("(?:[^"\\]|\\.)*")(\s*:\s*)(.+?)(,?)$')
-        .firstMatch(line);
+    final kvM = RegExp(
+      r'^(\s*)("(?:[^"\\]|\\.)*")(\s*:\s*)(.+?)(,?)$',
+    ).firstMatch(line);
     if (kvM != null) {
       return '${kvM[1]!}$_jKey${kvM[2]!}$_r'
           '$_jPunctuation${kvM[3]!}$_r'
@@ -278,7 +309,7 @@ class LoggerService {
     }
 
     final trimmed = line.trimLeft();
-    final indent  = line.substring(0, line.length - trimmed.length);
+    final indent = line.substring(0, line.length - trimmed.length);
 
     if (RegExp(r'^[{}\[\]],?$').hasMatch(trimmed)) {
       return '$indent$_jPunctuation$trimmed$_r';
@@ -286,7 +317,9 @@ class LoggerService {
 
     if (trimmed.startsWith('"')) {
       final comma = trimmed.endsWith(',') ? ',' : '';
-      final raw   = comma.isEmpty ? trimmed : trimmed.substring(0, trimmed.length - 1);
+      final raw = comma.isEmpty
+          ? trimmed
+          : trimmed.substring(0, trimmed.length - 1);
       return '$indent$_jStr$raw$_r$_jPunctuation$comma$_r';
     }
 
@@ -295,7 +328,7 @@ class LoggerService {
 
   /// Returns the ANSI-coloured representation of a JSON value token.
   String _colorValue(String v) {
-    final core  = v.endsWith(',') ? v.substring(0, v.length - 1) : v;
+    final core = v.endsWith(',') ? v.substring(0, v.length - 1) : v;
     final comma = v.endsWith(',') ? ',' : '';
 
     if (core == 'null') {
@@ -317,7 +350,7 @@ class LoggerService {
 /// Holds a staged request until its matching response arrives.
 class _ReqBuf {
   final String method;
-  final Uri    uri;
+  final Uri uri;
   final Map<String, dynamic> headers;
   final dynamic payload;
   final DateTime ts;
@@ -359,14 +392,17 @@ class ConnectivityService {
   }
 
   void updateStatus(List<ConnectivityResult> results) {
-    final connected = results.contains(ConnectivityResult.mobile) ||
+    final connected =
+        results.contains(ConnectivityResult.mobile) ||
         results.contains(ConnectivityResult.wifi);
 
     if (connected != isOnline.value) {
       isOnline.value = connected;
 
       showSnack(
-        content: connected ? "Back Online" : "No Internet Connection",
+        content: connected
+            ? AppStrings.commonBackOnline
+            : AppStrings.commonNoInternetConnection,
         status: connected
             ? SnackBarStatus.connected
             : SnackBarStatus.disconnected,
@@ -390,6 +426,8 @@ class ConnectivityService {
 /// ===========================================================================
 class AuthTokenService {
   final GetStorage storage = GetStorage();
+  bool _logoutLoaderVisible = false;
+  Future<void>? _logoutFuture;
 
   static const String sessionTokenKey = 'session_token';
   static const String accessTokenKey = 'access_token';
@@ -420,10 +458,95 @@ class AuthTokenService {
   }
 
   void logOut() {
+    _logoutFuture ??= _performLogout().whenComplete(() {
+      _logoutFuture = null;
+    });
+    unawaited(_logoutFuture);
+  }
+
+  Future<void> _performLogout() async {
     LoggerService().info('[AuthTokenService] Logging out...');
-    clearTokens();
-    Get.offAllNamed(AppRoutes.appRoot);
-    LoggerService().info('[AuthTokenService] Logged out.');
+    _showLogoutLoader();
+    try {
+      await storage.erase();
+    } catch (error, stackTrace) {
+      LoggerService().error(
+        '[AuthTokenService] Failed to clear local state on logout.',
+        error,
+        stackTrace,
+      );
+      clearTokens();
+    } finally {
+      _hideLogoutLoader();
+      if (Get.currentRoute != AppRoutes.appRoot) {
+        Get.offAllNamed(AppRoutes.appRoot);
+      }
+      LoggerService().info('[AuthTokenService] Logged out.');
+    }
+  }
+
+  void _showLogoutLoader() {
+    final context = Get.overlayContext ?? Get.context;
+    if (context == null || _logoutLoaderVisible) {
+      return;
+    }
+    _logoutLoaderVisible = true;
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        useRootNavigator: true,
+        builder: (_) => PopScope(
+          canPop: false,
+          child: Dialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+            insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 22, vertical: 20),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2.4),
+                  ),
+                  SizedBox(width: 14),
+                  Flexible(
+                    child: Text(
+                      'Logging out...',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ).then((_) {
+        _logoutLoaderVisible = false;
+      }),
+    );
+  }
+
+  void _hideLogoutLoader() {
+    if (!_logoutLoaderVisible) {
+      return;
+    }
+    final context = Get.overlayContext ?? Get.context;
+    if (context == null) {
+      _logoutLoaderVisible = false;
+      return;
+    }
+    final navigator = Navigator.of(context, rootNavigator: true);
+    if (navigator.canPop()) {
+      navigator.pop();
+    } else {
+      _logoutLoaderVisible = false;
+    }
   }
 }
 
@@ -431,13 +554,14 @@ class AuthTokenService {
 ///                            API SERVICE
 /// ===========================================================================
 enum ApiType { public, private }
+
 enum AuthMode { backendJwt, firebaseIdToken }
 
 class ApiAuthConfig {
   static AuthMode mode = AuthMode.backendJwt; // <-- change according to need
 
   // Only for backendJwt mode:
-  static const String refreshPath = '/api/v1/refresh-token/'; // <-- change to real endpoint
+  static const String refreshPath = '/api/v1/accounts/refresh-token/';
   static const String refreshTokenField = 'refresh';
 }
 
@@ -502,6 +626,9 @@ class ApiService {
     publicClient.interceptors.addAll([
       InterceptorsWrapper(
         onRequest: (options, handler) {
+          if (options.extra['skipLogging'] == true) {
+            return handler.next(options);
+          }
           logger.logRequest(
             options.method,
             options.uri,
@@ -512,6 +639,9 @@ class ApiService {
           handler.next(options);
         },
         onResponse: (response, handler) {
+          if (response.requestOptions.extra['skipLogging'] == true) {
+            return handler.next(response);
+          }
           logger.logResponse(
             response.statusCode,
             response.data,
@@ -520,24 +650,29 @@ class ApiService {
           handler.next(response);
         },
         onError: (e, handler) {
-          final isConnectionError = e.type == DioExceptionType.connectionError ||
+          if (e.requestOptions.extra['skipLogging'] == true) {
+            return handler.next(e);
+          }
+          final isConnectionError =
+              e.type == DioExceptionType.connectionError ||
               e.message?.toLowerCase().contains('failed host lookup') == true;
 
           // Always flush the pending request buffer so REQUEST+RESPONSE appear together
           logger.logResponse(
             e.response?.statusCode ?? (isConnectionError ? 0 : -1),
-            e.response?.data ?? (isConnectionError ? 'Connection Error' : e.message),
+            e.response?.data ??
+                (isConnectionError ? 'Connection Error' : e.message),
             key: e.requestOptions.uri.toString(),
           );
 
           if (isConnectionError) {
             showSnack(
-              content: 'Check your internet or try again later',
+              content: AppStrings.commonCheckYourInternetOrTryAgainLater,
               status: SnackBarStatus.disconnected,
             );
           } else {
             showSnack(
-              content: 'Something went wrong. Please try again.',
+              content: AppStrings.commonSomethingWentWrongPleaseTryAgain,
               status: SnackBarStatus.error,
             );
           }
@@ -559,10 +694,24 @@ class ApiService {
           if (options.extra['skipAuth'] == true) {
             return handler.next(options);
           }
+          if (options.extra['skipLogging'] == true) {
+            final token = authStorage.accessToken;
+            final existingAuth = options.headers['Authorization']?.toString();
+
+            if (token != null &&
+                token.isNotEmpty &&
+                (existingAuth == null || existingAuth.isEmpty)) {
+              options.headers['Authorization'] = 'Bearer $token';
+            }
+            return handler.next(options);
+          }
 
           final token = authStorage.accessToken;
+          final existingAuth = options.headers['Authorization']?.toString();
 
-          if (token != null && token.isNotEmpty) {
+          if (token != null &&
+              token.isNotEmpty &&
+              (existingAuth == null || existingAuth.isEmpty)) {
             options.headers['Authorization'] = 'Bearer $token';
           }
 
@@ -578,6 +727,9 @@ class ApiService {
         },
 
         onResponse: (response, handler) {
+          if (response.requestOptions.extra['skipLogging'] == true) {
+            return handler.next(response);
+          }
           logger.logResponse(
             response.statusCode,
             response.data,
@@ -587,12 +739,35 @@ class ApiService {
         },
 
         onError: (e, handler) async {
+          if (e.requestOptions.extra['skipAuth'] == true) {
+            if (e.requestOptions.extra['skipLogging'] == true) {
+              return handler.next(e);
+            }
+            final isConnectionError =
+                e.type == DioExceptionType.connectionError ||
+                e.message?.toLowerCase().contains('failed host lookup') == true;
+
+            logger.logResponse(
+              e.response?.statusCode ?? (isConnectionError ? 0 : -1),
+              e.response?.data ??
+                  (isConnectionError ? 'Connection Error' : e.message),
+              key: e.requestOptions.uri.toString(),
+            );
+            return handler.next(e);
+          }
+
           final statusCode = e.response?.statusCode;
           final responseBody = e.response?.data;
-          final isUnauthorized = statusCode == 401 ||
+          final isUnauthorized =
+              statusCode == 401 ||
               (statusCode == 403 && isUnauthorizedError(e.response?.data));
-          final isConnectionError = e.type == DioExceptionType.connectionError ||
+          final isConnectionError =
+              e.type == DioExceptionType.connectionError ||
               e.message?.toLowerCase().contains('failed host lookup') == true;
+
+          if (e.requestOptions.extra['skipLogging'] == true) {
+            return handler.next(e);
+          }
 
           // Connectivity error — flush buffer with no-network indicator
           if (isConnectionError) {
@@ -602,7 +777,7 @@ class ApiService {
               key: e.requestOptions.uri.toString(),
             );
             showSnack(
-              content: 'Check your internet or try again later',
+              content: AppStrings.commonCheckYourInternetOrTryAgainLater,
               status: SnackBarStatus.disconnected,
             );
             return handler.next(e);
@@ -622,12 +797,26 @@ class ApiService {
           final alreadyRetried = (req.extra['__retried__'] == true);
 
           if (alreadyRetried) {
-            logger.error('[PRIVATE API] Unauthorized even after retry → logging out.');
+            logger.error(
+              '[PRIVATE API] Unauthorized even after retry → logging out.',
+            );
             AuthTokenService().logOut();
             return handler.next(e);
           }
 
-          logger.warn('[PRIVATE API] Unauthorized → attempting token refresh...');
+          final accessToken = authStorage.accessToken;
+          final hasToken = accessToken != null && accessToken.isNotEmpty;
+
+          if (!hasToken) {
+            logger.error(
+              '[PRIVATE API] 401 Unauthorized but no token found → skipping refresh.',
+            );
+            return handler.next(e);
+          }
+
+          logger.warn(
+            '[PRIVATE API] Unauthorized → attempting token refresh...',
+          );
 
           try {
             if (refreshCompleter != null) {
@@ -649,9 +838,12 @@ class ApiService {
 
             final res = await privateClient.fetch(req);
             return handler.resolve(res);
-
           } catch (err, st) {
-            logger.error('[PRIVATE API] Refresh failed → logging out.', err, st);
+            logger.error(
+              '[PRIVATE API] Refresh failed → logging out.',
+              err,
+              st,
+            );
             AuthTokenService().logOut();
             return handler.next(e);
           }
@@ -669,15 +861,17 @@ class ApiService {
     }
 
     logger.warn('[PRIVATE API] Refresh call starting...');
-    logger.warn('[PRIVATE API] Refresh full URL: ${privateClient.options.baseUrl}${ApiAuthConfig.refreshPath}');
-    logger.warn('[PRIVATE API] Refresh field: ${ApiAuthConfig.refreshTokenField}');
+    logger.warn(
+      '[PRIVATE API] Refresh full URL: ${privateClient.options.baseUrl}${ApiAuthConfig.refreshPath}',
+    );
+    logger.warn(
+      '[PRIVATE API] Refresh field: ${ApiAuthConfig.refreshTokenField}',
+    );
     logger.warn('[PRIVATE API] Refresh token exists: ${refresh.isNotEmpty}');
 
     final resp = await privateClient.post(
       ApiAuthConfig.refreshPath,
-      data: {
-        ApiAuthConfig.refreshTokenField: refresh,
-      },
+      data: {ApiAuthConfig.refreshTokenField: refresh},
       options: Options(
         extra: {'skipAuth': true}, // prevent interceptor recursion
       ),
@@ -695,15 +889,25 @@ class ApiService {
       );
     }
 
-    final data = resp.data;
-    if (data is! Map) {
+    final body = resp.data;
+    if (body is! Map) {
       throw AppException('Invalid refresh response format');
     }
 
+    if (body['success'] == false) {
+      throw AppException(
+        body['message']?.toString() ?? 'Refresh token failed',
+        statusCode: status,
+        body: body,
+      );
+    }
+
+    final payload = body['data'] is Map ? body['data'] as Map : body;
+
     final newAccess =
-        (data['access_token'] ?? data['access'])?.toString() ?? '';
+        (payload['access_token'] ?? payload['access'])?.toString() ?? '';
     final newRefresh =
-        (data['refresh_token'] ?? data['refresh'])?.toString() ?? '';
+        (payload['refresh_token'] ?? payload['refresh'])?.toString() ?? '';
 
     if (newAccess.isEmpty) {
       throw AppException('Refresh succeeded but access token missing');
@@ -730,8 +934,11 @@ class ApiService {
     final messages = data['messages'];
     if (messages is List) {
       for (final m in messages) {
-        final msg = (m is Map ? m['message'] : null)?.toString().toLowerCase() ?? '';
-        if (msg.contains('expired') || msg.contains('not valid') || msg.contains('token')) {
+        final msg =
+            (m is Map ? m['message'] : null)?.toString().toLowerCase() ?? '';
+        if (msg.contains('expired') ||
+            msg.contains('not valid') ||
+            msg.contains('token')) {
           return true;
         }
       }
@@ -747,10 +954,12 @@ class ApiService {
       String message = 'Unexpected error';
 
       if (data is Map<String, dynamic>) {
-        message = data['message']?.toString()
-            ?? data['error']?.toString()
-            ?? (data['errors'] is Map
-                ? (data['errors'] as Map).values.first?.first?.toString() ?? 'Invalid data'
+        message =
+            data['message']?.toString() ??
+            data['error']?.toString() ??
+            (data['errors'] is Map
+                ? (data['errors'] as Map).values.first?.first?.toString() ??
+                      'Invalid data'
                 : 'Something went wrong');
       } else if (data != null) {
         message = data.toString();
@@ -764,12 +973,12 @@ class ApiService {
   ///                              HTTP METHODS
   /// =========================================================================
   Future<Response> get(
-      String path, {
-        Map<String, dynamic>? query,
-        ApiType apiType = ApiType.private,
-        String? overrideBaseUrl,
-        Map<String, dynamic>? headers,
-      }) async {
+    String path, {
+    Map<String, dynamic>? query,
+    ApiType apiType = ApiType.private,
+    String? overrideBaseUrl,
+    Map<String, dynamic>? headers,
+  }) async {
     final client = getClient(apiType, overrideBaseUrl);
     final options = Options(
       headers: headers != null
@@ -787,13 +996,13 @@ class ApiService {
   }
 
   Future<Response> post(
-      String path, {
-        dynamic data,
-        Map<String, dynamic>? query,
-        ApiType apiType = ApiType.private,
-        String? overrideBaseUrl,
-        Map<String, dynamic>? headers,
-      }) async {
+    String path, {
+    dynamic data,
+    Map<String, dynamic>? query,
+    ApiType apiType = ApiType.private,
+    String? overrideBaseUrl,
+    Map<String, dynamic>? headers,
+  }) async {
     final client = getClient(apiType, overrideBaseUrl);
     final options = Options(
       headers: headers != null
@@ -812,13 +1021,13 @@ class ApiService {
   }
 
   Future<Response> patch(
-      String path, {
-        dynamic data,
-        Map<String, dynamic>? query,
-        ApiType apiType = ApiType.private,
-        String? overrideBaseUrl,
-        Map<String, dynamic>? headers,
-      }) async {
+    String path, {
+    dynamic data,
+    Map<String, dynamic>? query,
+    ApiType apiType = ApiType.private,
+    String? overrideBaseUrl,
+    Map<String, dynamic>? headers,
+  }) async {
     final client = getClient(apiType, overrideBaseUrl);
     final options = Options(
       headers: headers != null
@@ -837,13 +1046,13 @@ class ApiService {
   }
 
   Future<Response> put(
-      String path, {
-        dynamic data,
-        Map<String, dynamic>? query,
-        ApiType apiType = ApiType.private,
-        String? overrideBaseUrl,
-        Map<String, dynamic>? headers,
-      }) async {
+    String path, {
+    dynamic data,
+    Map<String, dynamic>? query,
+    ApiType apiType = ApiType.private,
+    String? overrideBaseUrl,
+    Map<String, dynamic>? headers,
+  }) async {
     final client = getClient(apiType, overrideBaseUrl);
     final options = Options(
       headers: headers != null
@@ -862,13 +1071,13 @@ class ApiService {
   }
 
   Future<Response> delete(
-      String path, {
-        dynamic data,
-        Map<String, dynamic>? query,
-        ApiType apiType = ApiType.private,
-        String? overrideBaseUrl,
-        Map<String, dynamic>? headers,
-      }) async {
+    String path, {
+    dynamic data,
+    Map<String, dynamic>? query,
+    ApiType apiType = ApiType.private,
+    String? overrideBaseUrl,
+    Map<String, dynamic>? headers,
+  }) async {
     final client = getClient(apiType, overrideBaseUrl);
     final options = Options(
       headers: headers != null
@@ -879,6 +1088,31 @@ class ApiService {
     final response = await client.delete(
       path,
       data: data,
+      queryParameters: query,
+      options: options,
+    );
+    handleError(response);
+    return response;
+  }
+
+  Future<Response> getBytes(
+    String path, {
+    Map<String, dynamic>? query,
+    ApiType apiType = ApiType.private,
+    String? overrideBaseUrl,
+    Map<String, dynamic>? headers,
+  }) async {
+    final client = getClient(apiType, overrideBaseUrl);
+    final options = Options(
+      responseType: ResponseType.bytes,
+      headers: headers != null
+          ? {...client.options.headers, ...headers}
+          : client.options.headers,
+      extra: {'skipLogging': true},
+    );
+
+    final response = await client.get(
+      path,
       queryParameters: query,
       options: options,
     );
